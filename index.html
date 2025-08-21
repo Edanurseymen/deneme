@@ -1107,6 +1107,9 @@
 		// Yeni eklenen global değişkenler
 		let ringModel = null; // Yüklenen yüzük modelini bu değişkende saklayacağız
         let gltfLoader = null; // .glb dosyalarını yüklemek için bu aracı kullanacağız
+        // Opsiyonel kolye (3D) desteği için
+        let necklaceModel = null;
+        let useNecklace3D = false; // Varsayılan: kapalı, istenirse açılabilir
         
 		// Core state
         let currentJewelry = 'earrings';
@@ -1831,6 +1834,7 @@ function filterProducts(category) {
             // --- YENİ KODLARIN SONU ---
             
             console.log('✅ 3D rendering system initialized');
+            console.log('[ThreeJS] Scene:', !!scene, 'Camera:', !!threeCamera, 'Renderer:', !!renderer);
         }
 		
 		function loadRingModel() {
@@ -1845,7 +1849,7 @@ function filterProducts(category) {
                     ringModel.position.set(0, 0, 0);
                     ringModel.visible = false; // Başlangıçta görünmez yapalım
                     scene.add(ringModel);
-                    console.log('💍 3D ring model loaded successfully!');
+                    console.log('💍 3D ring model loaded successfully! Added to scene:', !!ringModel.parent);
                     showNotification('3D Yüzük Modeli Yüklendi!', 'success');
                 },
                 undefined, // Yükleme ilerlemesi için burayı boş bırakabiliriz
@@ -1884,6 +1888,12 @@ function filterProducts(category) {
 
             if (renderer && scene && threeCamera) {
                 renderer.render(scene, threeCamera);
+                if (ringModel) {
+                    console.log('[Render] ring visible:', ringModel.visible, 'pos:', ringModel.position && ringModel.position.toArray());
+                }
+                if (useNecklace3D && necklaceModel) {
+                    console.log('[Render] necklace visible:', necklaceModel.visible);
+                }
             }
 
             requestAnimationFrame(renderLoop);
@@ -1915,9 +1925,16 @@ function filterProducts(category) {
          */
         function onFaceMeshResults(results) {
             // Only update state; actual drawing is handled in the RAF render loop
+            console.log('[FaceMesh] results:', results && results.multiFaceLandmarks ? results.multiFaceLandmarks.length : 0);
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 landmarks = results.multiFaceLandmarks[0];
                 faceDetected = true;
+                // Log a couple of key points for debugging (forehead index 10, left ear 234, right ear 454)
+                try {
+                    console.log('[FaceMesh] sample landmarks:', {
+                        l10: landmarks[10], l234: landmarks[234], l454: landmarks[454]
+                    });
+                } catch (e) {}
             } else {
                 faceDetected = false;
                 landmarks = null;
@@ -1930,9 +1947,16 @@ function filterProducts(category) {
          */
         function onHandsResults(results) {
             // Only update state; actual drawing is handled in the RAF render loop
+            console.log('[Hands] results:', results && results.multiHandLandmarks ? results.multiHandLandmarks.length : 0);
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 handLandmarks = results.multiHandLandmarks;
                 handsDetected = true;
+                try {
+                    const h0 = handLandmarks[0];
+                    console.log('[Hands] sample points:', {
+                        wrist: h0 && h0[0], ringBase: h0 && h0[13], indexTip: h0 && h0[8]
+                    });
+                } catch (e) {}
             } else {
                 handLandmarks = null;
                 handsDetected = false;
@@ -1992,7 +2016,10 @@ function filterProducts(category) {
                     if (landmarks) drawTiara(landmarks, width, height);
                     break;
                 case 'rings':
-                    if (handLandmarks) drawRings(handLandmarks, width, height);
+                    if (handLandmarks) {
+                        console.log('[Draw] rings with hand landmarks count:', handLandmarks.length);
+                        drawRings(handLandmarks, width, height);
+                    }
                     break;
                 case 'bracelet':
                     if (handLandmarks) drawBracelet(handLandmarks, width, height);
@@ -2122,6 +2149,7 @@ function filterProducts(category) {
             document.querySelector(`[data-product-id="${productId}"]`).classList.add('selected');
             
             showNotification(`Now trying on: ${product.name}`, 'success');
+            console.log('[TryOn] product:', productId, 'category:', currentJewelry, 'style:', currentStyle, 'color:', currentColor);
         }
 
         /**
@@ -2567,6 +2595,24 @@ const allProducts = [];
             const neckCenter = landmarks[10];
             const neckSize = (jewelrySize / 100) * 80;
             drawJewelryShape(neckCenter.x * width, neckCenter.y * height + 60, neckSize, 'necklace');
+            // Opsiyonel 3D kolye için basit konumlandırma (çene/boğaz altı)
+            try {
+                if (useNecklace3D && necklaceModel) {
+                    const chin = landmarks[152] || landmarks[10]; // alt çene civarı
+                    const vector = new THREE.Vector3(
+                        (chin.x * 2 - 1) * (width / height),
+                        -(chin.y * 2 - 1),
+                        0.5
+                    );
+                    vector.unproject(threeCamera);
+                    const dir = vector.sub(threeCamera.position).normalize();
+                    const distance = -threeCamera.position.z / dir.z;
+                    const pos = threeCamera.position.clone().add(dir.multiplyScalar(distance));
+                    necklaceModel.position.copy(pos);
+                    necklaceModel.position.x *= -1;
+                    necklaceModel.visible = true;
+                }
+            } catch (e) {}
         }
 
         function drawTiara(landmarks, width, height) {
@@ -2600,6 +2646,7 @@ const allProducts = [];
             // 4. Modelin pozisyonunu, boyutunu ve açısını güncelle
             ringModel.position.copy(pos);
             ringModel.position.x *= -1; // Kameranın ayna görüntüsü için x eksenini ters çevir
+            console.log('[Rings] model position:', ringModel.position.toArray());
     
             // Yüzüğün doğru görünmesi için bazı ince ayarlar (bu değerlerle oynayabilirsiniz)
             ringModel.rotation.z = Math.PI / 1.5; // Yüzüğün açısını ayarla
