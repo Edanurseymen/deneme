@@ -1142,6 +1142,12 @@
             memoryUsage: 0
         };
 
+        // Result heartbeat for debugging/fallback hints
+        let lastHandsResultAt = 0;
+        let lastFaceResultAt = 0;
+        let warnedNoHands = false;
+        let warnedNoFace = false;
+
         // Material library for enhanced 3D rendering
         const materialLibrary = {
             gold: { color: 0xFFD700, metalness: 0.9, roughness: 0.1, emissive: 0x221100 },
@@ -1742,7 +1748,8 @@ function filterProducts(category) {
          
                 faceMesh = new FaceMesh({
                     locateFile: (file) => {
-                        return `https://unpkg.com/@mediapipe/face_mesh@0.4.1640029074/${file}`;
+                        // Use jsDelivr CDN to avoid CORS issues seen with unpkg
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`;
                     }
                 });
         
@@ -1779,7 +1786,8 @@ function filterProducts(category) {
         
                 hands = new Hands({
                     locateFile: (file) => {
-                        return `https://unpkg.com/@mediapipe/hands@0.4.1640029074/${file}`;
+                        // Use jsDelivr CDN to avoid CORS issues seen with unpkg
+                        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`;
                     }
                 });
         
@@ -1896,6 +1904,18 @@ function filterProducts(category) {
                 }
             }
 
+            // Heartbeat warnings if no results received (helps diagnose CORS/model fetch)
+            const now = performance.now();
+            if (!warnedNoHands && now - lastHandsResultAt > 7000) {
+                console.warn('[Hands] No results yet. Check model file loading/CORS.');
+                showNotification('Hands model not producing results. Check CORS/CDN.', 'warning');
+                warnedNoHands = true;
+            }
+            if (!warnedNoFace && now - lastFaceResultAt > 7000) {
+                console.warn('[FaceMesh] No results yet. Check model file loading/CORS.');
+                warnedNoFace = true;
+            }
+
             requestAnimationFrame(renderLoop);
         }
 
@@ -1929,6 +1949,7 @@ function filterProducts(category) {
             if (results.multiFaceLandmarks && results.multiFaceLandmarks.length > 0) {
                 landmarks = results.multiFaceLandmarks[0];
                 faceDetected = true;
+                lastFaceResultAt = performance.now();
                 // Log a couple of key points for debugging (forehead index 10, left ear 234, right ear 454)
                 try {
                     console.log('[FaceMesh] sample landmarks:', {
@@ -1951,6 +1972,7 @@ function filterProducts(category) {
             if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
                 handLandmarks = results.multiHandLandmarks;
                 handsDetected = true;
+                lastHandsResultAt = performance.now();
                 try {
                     const h0 = handLandmarks[0];
                     console.log('[Hands] sample points:', {
