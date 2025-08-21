@@ -14,9 +14,8 @@
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils@0.3/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils@0.6/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils@0.3/drawing_utils.js" crossorigin="anonymous"></script>
-    <script src="/mediapipe/face_mesh/face_mesh.js"></script>
-    <script src="/mediapipe/hands/hands.js"></script>
-
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/face_mesh.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/hands.js" crossorigin="anonymous"></script>
     <style>
         * {
             margin: 0;
@@ -1110,10 +1109,15 @@
         let gltfLoader = null; // .glb dosyalarını yüklemek için bu aracı kullanacağız
         // Opsiyonel kolye (3D) desteği için
         let necklaceModel = null;
-        let useNecklace3D = false; // Varsayılan: kapalı, istenirse açılabilir
+        let useNecklace3D = true; // Kolyeyi 3D olarak denemek için varsayılan: açık (model yoksa otomatik düşer)
+        // Fotoğraf modu durumu
+        let photoMode = false;
+        let uploadedImage = null;
+        let uploadedImageWidth = 0;
+        let uploadedImageHeight = 0;
         
 		// Core state
-        let currentJewelry = 'earrings';
+        let currentJewelry = 'necklace';
         let currentStyle = 'classic';
         let currentColor = 'gold';
         let currentProductId = null;
@@ -1840,6 +1844,7 @@ function filterProducts(category) {
             // Three.js r128 versiyonu için doğru yol bu şekilde.
             gltfLoader = new THREE.GLTFLoader(); 
             loadRingModel(); // Yüzük modelini yükleyecek yeni fonksiyonu çağırıyoruz.
+            loadNecklaceModel(); // Opsiyonel kolye modelini yüklemeyi dene (dosya yoksa hatayı yakalar)
             // --- YENİ KODLARIN SONU ---
             
             console.log('✅ 3D rendering system initialized');
@@ -1869,6 +1874,26 @@ function filterProducts(category) {
             );
         }
 
+        function loadNecklaceModel() {
+            if (!gltfLoader) return;
+            // Bu fonksiyon 'necklace.glb' dosyasını kökten yüklemeyi dener. Dosya yoksa hatayı sessizce loglarız.
+            gltfLoader.load(
+                'necklace.glb',
+                function (gltf) {
+                    necklaceModel = gltf.scene;
+                    necklaceModel.scale.set(0.1, 0.1, 0.1);
+                    necklaceModel.position.set(0, 0, 0);
+                    necklaceModel.visible = false;
+                    scene.add(necklaceModel);
+                    console.log('📿 3D necklace model loaded and added to scene:', !!necklaceModel.parent);
+                },
+                undefined,
+                function (error) {
+                    console.warn('Necklace model not found or failed to load (optional):', error);
+                }
+            );
+        }
+
         // Continuous render loop decoupled from MediaPipe callbacks
         function renderLoop() {
             // Ensure canvases match video size
@@ -1891,6 +1916,14 @@ function filterProducts(category) {
             if (canvasCtx) {
                 canvasCtx.save();
                 canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+                if (photoMode && uploadedImage) {
+                    // Fotoğraf modunda yüklü resmi alt katmana çiz
+                    try {
+                        canvasCtx.globalAlpha = 1;
+                        canvasCtx.setTransform(1, 0, 0, 1, 0, 0);
+                        canvasCtx.drawImage(uploadedImage, 0, 0, canvasElement.width, canvasElement.height);
+                    } catch (e) {}
+                }
                 drawJewelry();
                 canvasCtx.restore();
             }
@@ -2773,7 +2806,35 @@ const allProducts = [];
         function handleFileUpload(event) {
             const file = event.target.files[0];
             if (!file) return;
-            showNotification('Photo upload feature coming soon!', 'info');
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = () => {
+                    uploadedImage = img;
+                    uploadedImageWidth = img.width;
+                    uploadedImageHeight = img.height;
+                    photoMode = true;
+                    // Kamera akışını (varsa) durdurmaya gerek yok; sadece alt katmana resmi çizeceğiz
+                    showNotification('📷 Photo loaded. Detecting landmarks on image...', 'success');
+                    // Face / Hands modellerine resmi verelim (birkaç frame üst üste göndererek sonuç alma olasılığını artırır)
+                    try {
+                        const off = document.createElement('canvas');
+                        off.width = canvasElement.width;
+                        off.height = canvasElement.height;
+                        const offCtx = off.getContext('2d');
+                        offCtx.drawImage(img, 0, 0, off.width, off.height);
+                        const frames = 3;
+                        for (let i = 0; i < frames; i++) {
+                            if (faceMesh) faceMesh.send({ image: off });
+                            if (hands) hands.send({ image: off });
+                        }
+                    } catch (err) {
+                        console.warn('Static image detection send failed:', err);
+                    }
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
         }
 
         function changeJewelryStyle() {
